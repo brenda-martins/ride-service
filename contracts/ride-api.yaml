@@ -1,0 +1,526 @@
+openapi: 3.1.0
+
+info:
+  title: Ride API
+  version: 0.1.0
+  summary: Ciclo de vida da corrida
+  description: |
+    Contrato do `ride-service`, **dono exclusivo** do estado da corrida.
+
+    ## Escopo
+    Solicitação, aceite, início, conclusão e cancelamento. Nada de pagamento,
+    rastreamento ou matching — esses pertencem a outros contextos.s
+
+    ## Convenções
+    - Campos opcionais são **omitidos**, nunca `null`.
+    - Dinheiro em inteiro de unidades mínimas + moeda ISO 4217.
+    - Datas em RFC 3339 UTC.
+    - Erros em RFC 9457 (`application/problem+json`) com `code` estável.
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://localhost:8081
+    description: Ambiente local (docker compose)
+
+tags:
+  - name: rides
+    description: Ciclo de vida da corrida
+
+paths:
+  /v1/rides:
+    post:
+      tags: [rides]
+      operationId: createRide
+      summary: Solicita uma corrida
+      description: |
+        Cria a corrida no estado `REQUESTED`.
+
+        Repetir a requisição com a mesma `Idempotency-Key` e o mesmo corpo
+        devolve `200` com a corrida original (sem duplicar).
+
+        Mesma chave com corpo diferente devolve `409` com
+        `code=IDEMPOTENCY_KEY_REUSED`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRideRequest'
+      responses:
+        '201':
+          description: Corrida criada no estado `REQUESTED`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '200':
+          description: Repetição idempotente — devolve a corrida já criada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /v1/rides/{rideId}:
+    get:
+      tags: [rides]
+      operationId: getRide
+      summary: Consulta uma corrida
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+      responses:
+        '200':
+          description: Corrida encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/rides/{rideId}/accept:
+    post:
+      tags: [rides]
+      operationId: acceptRide
+      summary: Motorista aceita a corrida
+      description: |
+        Transição `REQUESTED → ACCEPTED`.
+
+        `expectedVersion` implementa *optimistic locking*: o `UPDATE` só vence
+        se a linha ainda estiver em `REQUESTED` e com a versão esperada. Com N
+        motoristas disputando, exatamente um recebe `200`.
+
+        Erros de negócio (`409`) com `code`:
+        - `RIDE_ALREADY_ACCEPTED` — outro motorista venceu a disputa
+        - `DRIVER_UNAVAILABLE` — motorista não está `AVAILABLE` no driver-service
+        - `VERSION_CONFLICT` — `expectedVersion` não confere
+        - `ILLEGAL_TRANSITION` — corrida não está em `REQUESTED`
+
+        Se o `driver-service` estiver indisponível (Fase 3+), responde `503` e
+        **não** aplica o aceite.
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptRideRequest'
+      responses:
+        '200':
+          description: Corrida aceita
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/rides/{rideId}/start:
+    post:
+      tags: [rides]
+      operationId: startRide
+      summary: Motorista inicia a corrida
+      description: |
+        Transição `ACCEPTED → IN_PROGRESS`.
+        Só o motorista designado (`ride.driverId`) pode iniciar.
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRideRequest'
+      responses:
+        '200':
+          description: Corrida iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+
+  /v1/rides/{rideId}/complete:
+    post:
+      tags: [rides]
+      operationId: completeRide
+      summary: Motorista conclui a corrida
+      description: |
+        Transição `IN_PROGRESS → COMPLETED`. Calcula `fare.final`.
+
+        A resposta é o estado final imutável da corrida.
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteRideRequest'
+      responses:
+        '200':
+          description: Corrida concluída
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+
+  /v1/rides/{rideId}/cancel:
+    post:
+      tags: [rides]
+      operationId: cancelRide
+      summary: Cancela a corrida
+      description: |
+        Regras por ator:
+        - `RIDER`: permitido em `REQUESTED` e `ACCEPTED`
+        - `DRIVER`: permitido em `ACCEPTED` (apenas o motorista designado)
+        - `SYSTEM`: permitido em `REQUESTED`, `ACCEPTED` e `IN_PROGRESS`
+
+        Corrida terminal devolve `409` com `code=ILLEGAL_TRANSITION`.
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelRideRequest'
+      responses:
+        '200':
+          description: Corrida cancelada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ride'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  parameters:
+    RideId:
+      name: rideId
+      in: path
+      required: true
+      description: Identificador da corrida (UUIDv7)
+      schema:
+        type: string
+        format: uuid
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Chave única do comando, escopo por endpoint + ator, TTL de 24h.
+        Repetir o comando com a mesma chave não duplica efeitos.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Corpo ou cabeçalho inválido
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    Forbidden:
+      description: Ator não tem permissão para a operação
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    Conflict:
+      description: Conflito de estado (ver `code` no corpo)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    Gone:
+      description: Corrida em estado terminal; operação não é mais possível
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    UnprocessableEntity:
+      description: Requisição válida sintaticamente, mas inválida para o domínio
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    ServiceUnavailable:
+      description: |
+        Dependência indisponível. O comando **não** foi aplicado; é seguro
+        repetir com a mesma `Idempotency-Key`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    RideStatus:
+      type: string
+      description: |
+        Máquina de estados:
+        `REQUESTED → ACCEPTED → IN_PROGRESS → COMPLETED`;
+        `REQUESTED`/`ACCEPTED`/`IN_PROGRESS → CANCELLED`.
+      enum:
+        - REQUESTED
+        - ACCEPTED
+        - IN_PROGRESS
+        - COMPLETED
+        - CANCELLED
+
+    GeoPoint:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        address:
+          type: string
+          maxLength: 512
+          description: Endereço textual opcional, apenas para exibição
+
+    Money:
+      type: object
+      required: [amountMinor, currency]
+      properties:
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Valor em unidades mínimas (centavos). Nunca float.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: Moeda ISO 4217
+
+    Fare:
+      type: object
+      required: [estimated]
+      properties:
+        estimated:
+          $ref: '#/components/schemas/Money'
+        final:
+          $ref: '#/components/schemas/Money'
+          description: Presente apenas quando `status=COMPLETED`
+
+    Cancellation:
+      type: object
+      required: [actorType, reason, cancelledAt]
+      properties:
+        actorType:
+          type: string
+          enum: [RIDER, DRIVER, SYSTEM]
+        actorId:
+          type: string
+          format: uuid
+          description: Omitido quando `actorType=SYSTEM`
+        reason:
+          type: string
+          maxLength: 512
+        cancelledAt:
+          type: string
+          format: date-time
+
+    Ride:
+      type: object
+      required: [id, status, riderId, pickup, dropoff, fare, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/RideStatus'
+        riderId:
+          type: string
+          format: uuid
+        driverId:
+          type: string
+          format: uuid
+          description: Presente a partir de `ACCEPTED`
+        pickup:
+          $ref: '#/components/schemas/GeoPoint'
+        dropoff:
+          $ref: '#/components/schemas/GeoPoint'
+        fare:
+          $ref: '#/components/schemas/Fare'
+        driverDisplayName:
+          type: string
+          description: Snapshot no aceite, para exibição e recibo
+        vehiclePlate:
+          type: string
+          description: Snapshot no aceite, para identificação do veículo
+        cancellation:
+          $ref: '#/components/schemas/Cancellation'
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Versão do agregado para optimistic locking
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    CreateRideRequest:
+      type: object
+      required: [riderId, pickup, dropoff]
+      properties:
+        riderId:
+          type: string
+          format: uuid
+        pickup:
+          $ref: '#/components/schemas/GeoPoint'
+        dropoff:
+          $ref: '#/components/schemas/GeoPoint'
+
+    AcceptRideRequest:
+      type: object
+      required: [driverId, expectedVersion]
+      properties:
+        driverId:
+          type: string
+          format: uuid
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Versão lida pelo cliente; base do optimistic locking
+
+    StartRideRequest:
+      type: object
+      required: [driverId]
+      properties:
+        driverId:
+          type: string
+          format: uuid
+
+    CompleteRideRequest:
+      type: object
+      required: [driverId]
+      properties:
+        driverId:
+          type: string
+          format: uuid
+        finalLocation:
+          $ref: '#/components/schemas/GeoPoint'
+          description: Posição no encerramento; usada no cálculo final da tarifa
+
+    CancelRideRequest:
+      type: object
+      required: [actorType, reason]
+      properties:
+        actorType:
+          type: string
+          enum: [RIDER, DRIVER, SYSTEM]
+        actorId:
+          type: string
+          format: uuid
+          description: Obrigatório quando `actorType` é `RIDER` ou `DRIVER`
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+
+    Problem:
+      type: object
+      description: Corpo de erro conforme RFC 9457
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+          description: |
+            Código estável de negócio, para o cliente programar contra ele.
+            Ex.: `RIDE_ALREADY_ACCEPTED`, `DRIVER_UNAVAILABLE`,
+            `VERSION_CONFLICT`, `ILLEGAL_TRANSITION`,
+            `IDEMPOTENCY_KEY_REUSED`.
+        traceId:
+          type: string
+          description: Correlação com o tracing distribuído (W3C trace-id)
