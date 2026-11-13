@@ -4,7 +4,7 @@ FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
-# Cache de dependências separado do código.
+# Dependency cache kept separate from the source code.
 COPY go.mod go.sum ./
 RUN go mod download
 

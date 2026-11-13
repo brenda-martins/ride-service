@@ -1,4 +1,4 @@
-# If you prefer the allow list template instead of the deny list, see community template:
+# If you prefer the allow list template instead of the deny list, see the community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 # Binaries for programs and plugins
@@ -13,6 +13,7 @@
 
 # Debug artifacts (Delve / dlv debug leaves the instrumented binary behind)
 __debug_bin*
+/window
 
 # Code coverage profiles and other test artifacts
 *.out
