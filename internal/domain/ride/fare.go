@@ -5,8 +5,8 @@ import "fmt"
 // Fare holds the estimated fare and, when completed, the final fare.
 // Currency is fixed at creation (from the estimated fare).
 type Fare struct {
-	Estimated Money
-	Final     *Money
+	Estimated Money  `json:"estimated"`
+	Final     *Money `json:"final,omitempty"`
 }
 
 // Validate checks fare consistency.

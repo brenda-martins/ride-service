@@ -10,26 +10,26 @@ import (
 // acceptance (INV-1), version for optimistic locking, and immutability after a
 // terminal state (INV-5).
 type Ride struct {
-	ID     string
-	Status Status
+	ID     string `json:"id"`
+	Status Status `json:"status"`
 
-	RiderID  string
-	DriverID string
+	RiderID  string `json:"riderId"`
+	DriverID string `json:"driverId,omitempty"`
 
-	Pickup  GeoPoint
-	Dropoff GeoPoint
+	Pickup  GeoPoint `json:"pickup"`
+	Dropoff GeoPoint `json:"dropoff"`
 
-	Fare Fare
+	Fare Fare `json:"fare"`
 
-	DriverDisplayName string
-	VehiclePlate      string
+	DriverDisplayName string `json:"driverDisplayName,omitempty"`
+	VehiclePlate      string `json:"vehiclePlate,omitempty"`
 
-	Version     int64
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	AcceptedAt  *time.Time
-	StartedAt   *time.Time
-	CompletedAt *time.Time
+	Version     int64      `json:"version"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+	AcceptedAt  *time.Time `json:"acceptedAt,omitempty"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 // NewRequested creates a ride in the REQUESTED state (start of the lifecycle).

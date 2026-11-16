@@ -4,9 +4,9 @@ import "fmt"
 
 // GeoPoint represents a geographic coordinate. Address is optional (display only).
 type GeoPoint struct {
-	Lat     float64
-	Lng     float64
-	Address string
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+	Address string  `json:"address,omitempty"`
 }
 
 // Validate reports whether the coordinate is within valid bounds.

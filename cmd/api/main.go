@@ -10,10 +10,15 @@ import (
 	"syscall"
 	"time"
 
+	ridepg "ride/internal/adapters/postgres"
+	"ride/internal/app"
 	"ride/internal/config"
 	"ride/internal/database"
+	"ride/internal/domain/ride"
 	"ride/internal/httpapi"
 	"ride/internal/logging"
+	"ride/internal/platform/clock"
+	"ride/internal/platform/id"
 )
 
 func main() {
@@ -51,9 +56,30 @@ func main() {
 
 	logger.Debug("database connection established")
 
+	clk := clock.Real{}
+	ids := id.UUIDv7{}
+	ridesRepo := &ridepg.RideRepository{DB: db}
+	idemStore := &ridepg.IdempotencyStore{DB: db}
+	txMgr := &ridepg.TxManager{DB: db}
+
+	deps := httpapi.Dependencies{
+		CreateRide: &app.CreateRide{
+			Rides: ridesRepo,
+			Store: idemStore,
+			Tx:    txMgr,
+			Clock: clk,
+			IDs:   ids,
+			TTL:   24 * time.Hour,
+			Estimate: func(_, _ ride.GeoPoint) (ride.Money, error) {
+				// Phase 1: simple fixed estimate inside ride-service.
+				return ride.Money{AmountMinor: 2500, Currency: "BRL"}, nil
+			},
+		},
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(db, logger),
+		Handler:           httpapi.NewRouterWithDeps(db, logger, deps),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

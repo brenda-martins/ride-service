@@ -3,21 +3,38 @@ package httpapi
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"ride/internal/app"
 )
 
-// NewRouter builds the service's HTTP routes. At this stage only the health
-// probes exist; the ride endpoints arrive in Phase 1.
+type Dependencies struct {
+	CreateRide *app.CreateRide
+}
+
+// NewRouter builds the service's HTTP routes with no ride use cases wired yet.
+// Kept for backward compatibility with existing startup wiring.
 func NewRouter(db *sql.DB, logger *slog.Logger) http.Handler {
-	api := &API{db: db, logger: logger}
+	return NewRouterWithDeps(db, logger, Dependencies{})
+}
+
+// NewRouterWithDeps builds the service's HTTP routes and registers ride endpoints
+// for the current slice (create, get, accept) when dependencies are provided.
+func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.Handler {
+	api := &API{
+		db:           db,
+		logger:       logger,
+		createRideUC: deps.CreateRide,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", api.health)
 	mux.HandleFunc("GET /readyz", api.ready)
+
+	mux.HandleFunc("POST /v1/rides", api.createRide)
 
 	return requestLogger(mux, logger)
 }
@@ -25,6 +42,8 @@ func NewRouter(db *sql.DB, logger *slog.Logger) http.Handler {
 type API struct {
 	db     *sql.DB
 	logger *slog.Logger
+
+	createRideUC *app.CreateRide
 }
 
 // health is liveness: it reports whether the process is alive. It does not
@@ -45,12 +64,6 @@ func (a *API) ready(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 type statusRecorder struct {

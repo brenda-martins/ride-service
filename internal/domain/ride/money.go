@@ -5,8 +5,8 @@ import "fmt"
 // Money represents a monetary value in minor units (e.g. cents).
 // Never use floating point for money.
 type Money struct {
-	AmountMinor int64
-	Currency    string
+	AmountMinor int64  `json:"amountMinor"`
+	Currency    string `json:"currency"`
 }
 
 // Validate checks basic monetary invariants.
