@@ -1,6 +1,6 @@
--- Schema base do ride-service s
--- Dinheiro em unidades mínimas (inteiro) + moeda ISO 4217.
--- Campos opcionais são colunas NULL; a camada de API omite nulls no JSON.
+-- Base schema for ride-service (Phase 1, slice C).
+-- Money is stored in minor units (integer) + ISO 4217 currency.
+-- Optional fields are NULL columns; the API layer omits nulls from JSON.
 
 CREATE TABLE IF NOT EXISTS rides (
     id                   UUID PRIMARY KEY,
@@ -57,9 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_rides_rider_id ON rides (rider_id);
 CREATE INDEX IF NOT EXISTS idx_rides_driver_id ON rides (driver_id);
 CREATE INDEX IF NOT EXISTS idx_rides_status ON rides (status);
 
--- Idempotência de comandos: escopo por endpoint + ator + chave.
--- request_hash diferencia reuso indevido da mesma chave com corpo diferente.
--- response_body guarda a resposta serializada para replay fiel.
+-- Command idempotency: scoped by endpoint + actor + key.
+-- request_hash distinguishes improper reuse of the same key with a different body.
+-- response_body stores the serialized response for faithful replay.
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     endpoint         TEXT NOT NULL,
     actor_id         TEXT NOT NULL,
