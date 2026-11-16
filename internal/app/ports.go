@@ -15,7 +15,7 @@ type RideRepository interface {
 	// Implementations must ensure the update affects exactly one row matching
 	// id, expectedVersion and REQUESTED status; otherwise return ride.ErrVersionConflict
 	// or ride.ErrIllegalTransition/appropriate domain error context as applicable.
-	UpdateOnAccept(ctx context.Context, r *ride.Ride, expectedVersion int64) error
+	// UpdateOnAccept(ctx context.Context, r *ride.Ride, expectedVersion int64) error
 }
 
 // DriverAvailability checks whether a driver can accept rides.
@@ -37,14 +37,14 @@ type DriverInfo interface {
 
 // IdempotencyRecord stores a previously computed command response for replay.
 type IdempotencyRecord struct {
-	Endpoint      string
-	ActorID       string
-	Key           string
-	RequestHash   string
-	ResponseCode  int
-	ResponseBody  []byte
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
+	Endpoint     string
+	ActorID      string
+	Key          string
+	RequestHash  string
+	ResponseCode int
+	ResponseBody []byte
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
 }
 
 // IdempotencyStore persists and retrieves idempotency records.
