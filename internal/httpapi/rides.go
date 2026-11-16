@@ -84,6 +84,7 @@ func (a *API) createRide(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(out.ResponseCode)
 	_, _ = w.Write(out.ResponseBody)
 }
+
 func validateIdempotencyKey(key string) error {
 	if key == "" {
 		return errors.New("Idempotency-Key header is required")
@@ -92,6 +93,29 @@ func validateIdempotencyKey(key string) error {
 		return errors.New("Idempotency-Key must be between 16 and 128 characters")
 	}
 	return nil
+}
+
+func (a *API) getRide(w http.ResponseWriter, r *http.Request) {
+	if a.getRideUC == nil {
+		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "SERVICE_UNAVAILABLE", "ride retrieval is not configured")
+		return
+	}
+	rideID := r.PathValue("rideId")
+	if rideID == "" {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "rideId is required")
+		return
+	}
+	res, err := a.getRideUC.Execute(r.Context(), rideID)
+	if err != nil {
+		if errors.Is(err, ride.ErrNotFound) {
+			writeProblem(w, r, http.StatusNotFound, "Not Found", "RIDE_NOT_FOUND", "ride not found")
+			return
+		}
+		a.logger.Error("get ride failed", "err", err, "rideId", rideID)
+		writeProblem(w, r, http.StatusInternalServerError, "Internal Server Error", "INTERNAL_ERROR", "unexpected error")
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func writeCreateRideError(w http.ResponseWriter, r *http.Request, err error) {

@@ -13,6 +13,15 @@ import (
 
 type Dependencies struct {
 	CreateRide *app.CreateRide
+	GetRide    *app.GetRide
+}
+
+type API struct {
+	db     *sql.DB
+	logger *slog.Logger
+
+	createRideUC *app.CreateRide
+	getRideUC    *app.GetRide
 }
 
 // NewRouter builds the service's HTTP routes with no ride use cases wired yet.
@@ -28,6 +37,7 @@ func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.
 		db:           db,
 		logger:       logger,
 		createRideUC: deps.CreateRide,
+		getRideUC:    deps.GetRide,
 	}
 
 	mux := http.NewServeMux()
@@ -35,15 +45,9 @@ func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.
 	mux.HandleFunc("GET /readyz", api.ready)
 
 	mux.HandleFunc("POST /v1/rides", api.createRide)
+	mux.HandleFunc("GET /v1/rides/{rideId}", api.getRide)
 
 	return requestLogger(mux, logger)
-}
-
-type API struct {
-	db     *sql.DB
-	logger *slog.Logger
-
-	createRideUC *app.CreateRide
 }
 
 // health is liveness: it reports whether the process is alive. It does not

@@ -75,6 +75,7 @@ func main() {
 				return ride.Money{AmountMinor: 2500, Currency: "BRL"}, nil
 			},
 		},
+		GetRide: &app.GetRide{Rides: ridesRepo},
 	}
 
 	srv := &http.Server{
