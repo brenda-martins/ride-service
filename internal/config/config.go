@@ -8,36 +8,24 @@ import (
 	"time"
 )
 
-// Environments recognized by the service.
 const (
-	// EnvDebug enables verbose, human-readable logging with "source"
-	// (file:line) on every line.
 	EnvDebug = "debug"
-	// EnvProd is the default: structured JSON logs at info level.
-	EnvProd = "prod"
+	EnvProd  = "prod"
 )
 
 // Accepted log formats.
 const (
-	// FormatJSON is the structured format used in production.
 	FormatJSON = "json"
-	// FormatText is the human-readable format used in debug.
 	FormatText = "text"
 )
 
 // Config gathers the parameters read from the environment at service start.
 type Config struct {
-	// Env defines the execution mode (debug or prod).
-	Env string
-	// HTTPAddr is the HTTP server listen address.
-	HTTPAddr string
-	// DatabaseURL is the connection to the service's Postgres.
-	DatabaseURL string
-	// LogLevel is the minimum level of emitted logs.
-	LogLevel slog.Level
-	// LogFormat is "json" (collectors) or "text" (human reading).
-	LogFormat string
-	// ShutdownTimeout bounds the server drain on shutdown.
+	Env             string
+	HTTPAddr        string
+	DatabaseURL     string
+	LogLevel        slog.Level
+	LogFormat       string
 	ShutdownTimeout time.Duration
 }
 
