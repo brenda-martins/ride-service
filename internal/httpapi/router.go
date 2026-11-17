@@ -14,6 +14,7 @@ import (
 type Dependencies struct {
 	CreateRide *app.CreateRide
 	GetRide    *app.GetRide
+	AcceptRide *app.AcceptRide
 }
 
 type API struct {
@@ -22,6 +23,7 @@ type API struct {
 
 	createRideUC *app.CreateRide
 	getRideUC    *app.GetRide
+	acceptRideUC *app.AcceptRide
 }
 
 // NewRouter builds the service's HTTP routes with no ride use cases wired yet.
@@ -38,6 +40,7 @@ func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.
 		logger:       logger,
 		createRideUC: deps.CreateRide,
 		getRideUC:    deps.GetRide,
+		acceptRideUC: deps.AcceptRide,
 	}
 
 	mux := http.NewServeMux()
@@ -46,6 +49,7 @@ func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.
 
 	mux.HandleFunc("POST /v1/rides", api.createRide)
 	mux.HandleFunc("GET /v1/rides/{rideId}", api.getRide)
+	mux.HandleFunc("POST /v1/rides/{rideId}/accept", api.acceptRide)
 
 	return requestLogger(mux, logger)
 }

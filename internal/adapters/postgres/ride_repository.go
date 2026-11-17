@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"ride/internal/domain/ride"
 )
@@ -124,6 +123,48 @@ func (r *RideRepository) GetByID(ctx context.Context, id string) (*ride.Ride, er
 	return &rd, nil
 }
 
+// UpdateOnAccept persists the REQUESTED -> ACCEPTED transition using optimistic
+// locking. It only updates a row that is still REQUESTED and matches
+// expectedVersion; otherwise it reports the appropriate domain error.
+func (r *RideRepository) UpdateOnAccept(ctx context.Context, rd *ride.Ride, expectedVersion int64) error {
+	ex := execFromContext(ctx, r.DB)
+	const q = `
+		UPDATE rides SET
+			status = $2,
+			driver_id = $3,
+			driver_display_name = $4,
+			vehicle_plate = $5,
+			version = $6,
+			updated_at = $7,
+			accepted_at = $8
+		WHERE id = $1 AND version = $9 AND status = $10`
+	res, err := ex.ExecContext(ctx, q,
+		rd.ID, string(rd.Status), nullString(rd.DriverID),
+		nullString(rd.DriverDisplayName), nullString(rd.VehiclePlate),
+		rd.Version, rd.UpdatedAt, rd.AcceptedAt,
+		expectedVersion, string(ride.StatusRequested),
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// Distinguish version/status conflicts when possible.
+		current, err := r.GetByID(ctx, rd.ID)
+		if err != nil {
+			return err
+		}
+		if current.Status != ride.StatusRequested {
+			return ride.ErrIllegalTransition
+		}
+		return ride.ErrVersionConflict
+	}
+	return nil
+}
+
 func nullString(s string) any {
 	if s == "" {
 		return nil
@@ -160,5 +201,3 @@ func moneyCurrency(m *ride.Money) *string {
 	v := m.Currency
 	return &v
 }
-
-var _ = time.Time{}

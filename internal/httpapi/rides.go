@@ -118,6 +118,55 @@ func (a *API) getRide(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+func (a *API) acceptRide(w http.ResponseWriter, r *http.Request) {
+	if a.acceptRideUC == nil {
+		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "SERVICE_UNAVAILABLE", "ride acceptance is not configured")
+		return
+	}
+	key := r.Header.Get("Idempotency-Key")
+	if err := validateIdempotencyKey(key); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
+		return
+	}
+	rideID := r.PathValue("rideId")
+	if rideID == "" {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "rideId is required")
+		return
+	}
+
+	var req acceptRideRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.DriverID) == "" || req.ExpectedVersion == nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "driverId and expectedVersion are required")
+		return
+	}
+	if *req.ExpectedVersion < 1 {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "expectedVersion must be >= 1")
+		return
+	}
+
+	out, err := a.acceptRideUC.Execute(r.Context(), app.AcceptRideInput{
+		RideID:          rideID,
+		DriverID:        req.DriverID,
+		ExpectedVersion: *req.ExpectedVersion,
+		ActorID:         req.DriverID,
+		IdempotencyKey:  key,
+	})
+	if err != nil {
+		writeAcceptRideError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(out.ResponseCode)
+	_, _ = w.Write(out.ResponseBody)
+}
+
 func writeCreateRideError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, app.ErrIdempotencyKeyReused):
@@ -126,6 +175,26 @@ func writeCreateRideError(w http.ResponseWriter, r *http.Request, err error) {
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 	case errors.Is(err, ride.ErrInvariantViolation):
 		writeProblem(w, r, http.StatusUnprocessableEntity, "Unprocessable Entity", "DOMAIN_INVARIANT_VIOLATION", err.Error())
+	default:
+		writeProblem(w, r, http.StatusInternalServerError, "Internal Server Error", "INTERNAL_ERROR", "unexpected error")
+	}
+}
+
+func writeAcceptRideError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, app.ErrIdempotencyKeyReused):
+		writeProblem(w, r, http.StatusConflict, "Conflict", "IDEMPOTENCY_KEY_REUSED", "idempotency key was already used with a different request body")
+	case errors.Is(err, ride.ErrNotFound):
+		writeProblem(w, r, http.StatusNotFound, "Not Found", "RIDE_NOT_FOUND", "ride not found")
+	case errors.Is(err, ride.ErrDriverUnavailable):
+		writeProblem(w, r, http.StatusConflict, "Conflict", "DRIVER_UNAVAILABLE", "driver is not available")
+	case errors.Is(err, ride.ErrVersionConflict):
+		writeProblem(w, r, http.StatusConflict, "Conflict", "VERSION_CONFLICT", "expectedVersion does not match current ride version")
+	case errors.Is(err, ride.ErrIllegalTransition):
+		// Map illegal transition on accept to the contract's business conflict.
+		writeProblem(w, r, http.StatusConflict, "Conflict", "ILLEGAL_TRANSITION", "ride is not in REQUESTED state")
+	case errors.Is(err, ride.ErrInvalidArgument):
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 	default:
 		writeProblem(w, r, http.StatusInternalServerError, "Internal Server Error", "INTERNAL_ERROR", "unexpected error")
 	}

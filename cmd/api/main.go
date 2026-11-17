@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"ride/internal/adapters/driverclient"
 	ridepg "ride/internal/adapters/postgres"
 	"ride/internal/app"
 	"ride/internal/config"
@@ -61,6 +62,7 @@ func main() {
 	ridesRepo := &ridepg.RideRepository{DB: db}
 	idemStore := &ridepg.IdempotencyStore{DB: db}
 	txMgr := &ridepg.TxManager{DB: db}
+	driverStub := &driverclient.Stub{}
 
 	deps := httpapi.Dependencies{
 		CreateRide: &app.CreateRide{
@@ -76,6 +78,15 @@ func main() {
 			},
 		},
 		GetRide: &app.GetRide{Rides: ridesRepo},
+		AcceptRide: &app.AcceptRide{
+			Rides:        ridesRepo,
+			Availability: driverStub,
+			DriverInfo:   driverStub,
+			Store:        idemStore,
+			Tx:           txMgr,
+			Clock:        clk,
+			TTL:          24 * time.Hour,
+		},
 	}
 
 	srv := &http.Server{
