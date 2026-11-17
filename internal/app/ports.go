@@ -15,7 +15,7 @@ type RideRepository interface {
 	// Implementations must ensure the update affects exactly one row matching
 	// id, expectedVersion and REQUESTED status; otherwise return ride.ErrVersionConflict
 	// or ride.ErrIllegalTransition/appropriate domain error context as applicable.
-	UpdateOnAccept(ctx context.Context, r *ride.Ride, expectedVersion int64) error
+	Update(ctx context.Context, r *ride.Ride, expectedVersion int64) error
 }
 
 // DriverAvailability checks whether a driver can accept rides.

@@ -126,7 +126,7 @@ func (r *RideRepository) GetByID(ctx context.Context, id string) (*ride.Ride, er
 // UpdateOnAccept persists the REQUESTED -> ACCEPTED transition using optimistic
 // locking. It only updates a row that is still REQUESTED and matches
 // expectedVersion; otherwise it reports the appropriate domain error.
-func (r *RideRepository) UpdateOnAccept(ctx context.Context, rd *ride.Ride, expectedVersion int64) error {
+func (r *RideRepository) Update(ctx context.Context, rd *ride.Ride, expectedVersion int64) error {
 	ex := execFromContext(ctx, r.DB)
 	const q = `
 		UPDATE rides SET

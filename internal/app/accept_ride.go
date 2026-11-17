@@ -113,7 +113,7 @@ func (uc *AcceptRide) accept(ctx context.Context, cfg IdempotencyConfig, hash st
 		if err != nil {
 			return err
 		}
-		if err := uc.Rides.UpdateOnAccept(ctx, r, in.ExpectedVersion); err != nil {
+		if err := uc.Rides.Update(ctx, r, in.ExpectedVersion); err != nil {
 			return err
 		}
 		b, err := json.Marshal(r)
