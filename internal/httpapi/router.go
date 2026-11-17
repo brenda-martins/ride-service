@@ -26,15 +26,7 @@ type API struct {
 	acceptRideUC *app.AcceptRide
 }
 
-// NewRouter builds the service's HTTP routes with no ride use cases wired yet.
-// Kept for backward compatibility with existing startup wiring.
-func NewRouter(db *sql.DB, logger *slog.Logger) http.Handler {
-	return NewRouterWithDeps(db, logger, Dependencies{})
-}
-
-// NewRouterWithDeps builds the service's HTTP routes and registers ride endpoints
-// for the current slice (create, get, accept) when dependencies are provided.
-func NewRouterWithDeps(db *sql.DB, logger *slog.Logger, deps Dependencies) http.Handler {
+func NewRouter(db *sql.DB, logger *slog.Logger, deps Dependencies) http.Handler {
 	api := &API{
 		db:           db,
 		logger:       logger,

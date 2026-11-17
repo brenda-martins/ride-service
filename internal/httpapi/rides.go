@@ -85,16 +85,6 @@ func (a *API) createRide(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out.ResponseBody)
 }
 
-func validateIdempotencyKey(key string) error {
-	if key == "" {
-		return errors.New("Idempotency-Key header is required")
-	}
-	if len(key) < 16 || len(key) > 128 {
-		return errors.New("Idempotency-Key must be between 16 and 128 characters")
-	}
-	return nil
-}
-
 func (a *API) getRide(w http.ResponseWriter, r *http.Request) {
 	if a.getRideUC == nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "SERVICE_UNAVAILABLE", "ride retrieval is not configured")
@@ -165,6 +155,16 @@ func (a *API) acceptRide(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(out.ResponseCode)
 	_, _ = w.Write(out.ResponseBody)
+}
+
+func validateIdempotencyKey(key string) error {
+	if key == "" {
+		return errors.New("Idempotency-Key header is required")
+	}
+	if len(key) < 16 || len(key) > 128 {
+		return errors.New("Idempotency-Key must be between 16 and 128 characters")
+	}
+	return nil
 }
 
 func writeCreateRideError(w http.ResponseWriter, r *http.Request, err error) {

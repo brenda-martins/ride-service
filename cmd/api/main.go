@@ -53,7 +53,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouterWithDeps(db, logger, buildDependencies(db)),
+		Handler:           httpapi.NewRouter(db, logger, buildDependencies(db)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

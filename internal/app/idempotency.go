@@ -11,6 +11,15 @@ import (
 
 var ErrIdempotencyKeyReused = errors.New("idempotency key reused with different request")
 
+type IdempotencyConfig struct {
+	Store    IdempotencyStore
+	Clock    Clock
+	Endpoint string
+	ActorID  string
+	Key      string
+	TTL      time.Duration
+}
+
 // HashRequest returns a stable hash of the canonical JSON encoding of v.
 func HashRequest(v any) (string, error) {
 	b, err := json.Marshal(v)
@@ -19,16 +28,6 @@ func HashRequest(v any) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// IdempotencyConfig configures idempotency behavior for a command.
-type IdempotencyConfig struct {
-	Store    IdempotencyStore
-	Clock    Clock
-	Endpoint string
-	ActorID  string
-	Key      string
-	TTL      time.Duration
 }
 
 // BeginIdempotency checks for an existing idempotency record.

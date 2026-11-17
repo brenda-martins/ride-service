@@ -40,19 +40,43 @@ type AcceptRide struct {
 }
 
 func (uc *AcceptRide) Execute(ctx context.Context, in AcceptRideInput) (AcceptRideOutput, error) {
+	hash, err := acceptRideRequestHash(in)
+	if err != nil {
+		return AcceptRideOutput{}, err
+	}
+	cfg := uc.idempotencyConfig(in)
+
+	if out, replayed, err := uc.replay(ctx, cfg, hash); err != nil {
+		return AcceptRideOutput{}, err
+	} else if replayed {
+		return out, nil
+	}
+
+	if in.RideID == "" {
+		return AcceptRideOutput{}, fmt.Errorf("%w: rideId is required", ride.ErrInvalidArgument)
+	}
+
+	r, body, err := uc.accept(ctx, cfg, hash, in)
+	if err != nil {
+		return AcceptRideOutput{}, err
+	}
+	return AcceptRideOutput{Ride: r, Replayed: false, ResponseCode: 200, ResponseBody: body}, nil
+}
+
+func acceptRideRequestHash(in AcceptRideInput) (string, error) {
+	return HashRequest(struct {
+		RideID          string `json:"rideId"`
+		DriverID        string `json:"driverId"`
+		ExpectedVersion int64  `json:"expectedVersion"`
+	}{RideID: in.RideID, DriverID: in.DriverID, ExpectedVersion: in.ExpectedVersion})
+}
+
+func (uc *AcceptRide) idempotencyConfig(in AcceptRideInput) IdempotencyConfig {
 	actorID := in.ActorID
 	if actorID == "" {
 		actorID = in.DriverID
 	}
-	hash, err := HashRequest(struct {
-		DriverID        string `json:"driverId"`
-		ExpectedVersion int64  `json:"expectedVersion"`
-	}{DriverID: in.DriverID, ExpectedVersion: in.ExpectedVersion})
-	if err != nil {
-		return AcceptRideOutput{}, err
-	}
-
-	cfg := IdempotencyConfig{
+	return IdempotencyConfig{
 		Store:    uc.Store,
 		Clock:    uc.Clock,
 		Endpoint: EndpointAcceptRide,
@@ -60,67 +84,79 @@ func (uc *AcceptRide) Execute(ctx context.Context, in AcceptRideInput) (AcceptRi
 		Key:      in.IdempotencyKey,
 		TTL:      uc.TTL,
 	}
-	if rec, replay, err := BeginIdempotency(ctx, cfg, hash); err != nil {
-		return AcceptRideOutput{}, err
-	} else if replay {
-		var r ride.Ride
-		if err := json.Unmarshal(rec.ResponseBody, &r); err != nil {
-			return AcceptRideOutput{}, err
-		}
-		return AcceptRideOutput{Ride: &r, Replayed: true, ResponseCode: 200, ResponseBody: rec.ResponseBody}, nil
-	}
+}
 
-	if in.RideID == "" {
-		return AcceptRideOutput{}, fmt.Errorf("%w: rideId is required", ride.ErrInvalidArgument)
+func (uc *AcceptRide) replay(ctx context.Context, cfg IdempotencyConfig, hash string) (AcceptRideOutput, bool, error) {
+	rec, replayed, err := BeginIdempotency(ctx, cfg, hash)
+	if err != nil || !replayed {
+		return AcceptRideOutput{}, false, err
 	}
+	var r ride.Ride
+	if err := json.Unmarshal(rec.ResponseBody, &r); err != nil {
+		return AcceptRideOutput{}, false, err
+	}
+	return AcceptRideOutput{
+		Ride:         &r,
+		Replayed:     true,
+		ResponseCode: 200,
+		ResponseBody: rec.ResponseBody,
+	}, true, nil
+}
 
-	// Execute within a transaction: load, check availability, apply domain transition, persist with optimistic locking.
-	var result *ride.Ride
-	run := func(ctx context.Context) error {
-		r, err := uc.Rides.GetByID(ctx, in.RideID)
+func (uc *AcceptRide) accept(ctx context.Context, cfg IdempotencyConfig, hash string, in AcceptRideInput) (*ride.Ride, []byte, error) {
+	var (
+		result *ride.Ride
+		body   []byte
+	)
+	err := withinTx(ctx, uc.Tx, func(ctx context.Context) error {
+		r, err := uc.applyAcceptance(ctx, in)
 		if err != nil {
-			return err
-		}
-		available, err := uc.Availability.IsAvailable(ctx, in.DriverID)
-		if err != nil {
-			return err
-		}
-		var snap DriverSnapshot
-		if uc.DriverInfo != nil {
-			snap, err = uc.DriverInfo.GetSnapshot(ctx, in.DriverID)
-			if err != nil {
-				return err
-			}
-		}
-		now := uc.Clock.Now()
-		if err := r.Accept(in.DriverID, in.ExpectedVersion, available, snap.DisplayName, snap.VehiclePlate, now); err != nil {
 			return err
 		}
 		if err := uc.Rides.UpdateOnAccept(ctx, r, in.ExpectedVersion); err != nil {
 			return err
 		}
-		body, err := json.Marshal(r)
+		b, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		if err := SaveIdempotency(ctx, cfg, hash, 200, body); err != nil {
+		if err := SaveIdempotency(ctx, cfg, hash, 200, b); err != nil {
 			return err
 		}
-		result = r
+		result, body = r, b
 		return nil
-	}
-	if uc.Tx != nil {
-		if err := uc.Tx.WithinTx(ctx, run); err != nil {
-			return AcceptRideOutput{}, err
-		}
-	} else {
-		if err := run(ctx); err != nil {
-			return AcceptRideOutput{}, err
-		}
-	}
-	body, err := json.Marshal(result)
+	})
 	if err != nil {
-		return AcceptRideOutput{}, err
+		return nil, nil, err
 	}
-	return AcceptRideOutput{Ride: result, Replayed: false, ResponseCode: 200, ResponseBody: body}, nil
+	return result, body, nil
+}
+
+func (uc *AcceptRide) applyAcceptance(ctx context.Context, in AcceptRideInput) (*ride.Ride, error) {
+	r, err := uc.Rides.GetByID(ctx, in.RideID)
+	if err != nil {
+		return nil, err
+	}
+
+	available, err := uc.Availability.IsAvailable(ctx, in.DriverID)
+	if err != nil {
+		return nil, err
+	}
+
+	snap, err := uc.driverSnapshot(ctx, in.DriverID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := r.Accept(in.DriverID, in.ExpectedVersion, available, snap.DisplayName, snap.VehiclePlate, uc.Clock.Now()); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (uc *AcceptRide) driverSnapshot(ctx context.Context, driverID string) (DriverSnapshot, error) {
+	if uc.DriverInfo == nil {
+		return DriverSnapshot{}, nil
+	}
+	return uc.DriverInfo.GetSnapshot(ctx, driverID)
 }
