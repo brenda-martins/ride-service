@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -46,14 +45,12 @@ func (a *API) createRide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createRideRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if strings.TrimSpace(req.RiderID) == "" {
-		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "riderId is required")
+	riderID, err := requiredID("riderId", req.RiderID)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 		return
 	}
 	pickup, err := req.Pickup.toDomain()
@@ -68,10 +65,10 @@ func (a *API) createRide(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := a.createRideUC.Execute(r.Context(), app.CreateRideInput{
-		RiderID:        req.RiderID,
+		RiderID:        riderID,
 		Pickup:         pickup,
 		Dropoff:        dropoff,
-		ActorID:        req.RiderID,
+		ActorID:        riderID,
 		IdempotencyKey: key,
 	})
 	if err != nil {
@@ -90,9 +87,13 @@ func (a *API) getRide(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusServiceUnavailable, "Service Unavailable", "SERVICE_UNAVAILABLE", "ride retrieval is not configured")
 		return
 	}
-	rideID := r.PathValue("rideId")
+	rideID := strings.TrimSpace(r.PathValue("rideId"))
 	if rideID == "" {
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "rideId is required")
+		return
+	}
+	if err := validateUUID("rideId", rideID); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 		return
 	}
 	res, err := a.getRideUC.Execute(r.Context(), rideID)
@@ -118,21 +119,27 @@ func (a *API) acceptRide(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 		return
 	}
-	rideID := r.PathValue("rideId")
+	rideID := strings.TrimSpace(r.PathValue("rideId"))
 	if rideID == "" {
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "rideId is required")
 		return
 	}
-
-	var req acceptRideRequest
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "invalid JSON body")
+	if err := validateUUID("rideId", rideID); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
 		return
 	}
-	if strings.TrimSpace(req.DriverID) == "" || req.ExpectedVersion == nil {
-		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "driverId and expectedVersion are required")
+
+	var req acceptRideRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	driverID, err := requiredID("driverId", req.DriverID)
+	if err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.ExpectedVersion == nil {
+		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", "expectedVersion is required")
 		return
 	}
 	if *req.ExpectedVersion < 1 {
@@ -142,9 +149,9 @@ func (a *API) acceptRide(w http.ResponseWriter, r *http.Request) {
 
 	out, err := a.acceptRideUC.Execute(r.Context(), app.AcceptRideInput{
 		RideID:          rideID,
-		DriverID:        req.DriverID,
+		DriverID:        driverID,
 		ExpectedVersion: *req.ExpectedVersion,
-		ActorID:         req.DriverID,
+		ActorID:         driverID,
 		IdempotencyKey:  key,
 	})
 	if err != nil {
@@ -190,8 +197,13 @@ func writeAcceptRideError(w http.ResponseWriter, r *http.Request, err error) {
 		writeProblem(w, r, http.StatusConflict, "Conflict", "DRIVER_UNAVAILABLE", "driver is not available")
 	case errors.Is(err, ride.ErrVersionConflict):
 		writeProblem(w, r, http.StatusConflict, "Conflict", "VERSION_CONFLICT", "expectedVersion does not match current ride version")
+	case errors.Is(err, ride.ErrAlreadyAccepted):
+		// Another driver won the race, or this ride was already accepted.
+		writeProblem(w, r, http.StatusConflict, "Conflict", "RIDE_ALREADY_ACCEPTED", "ride was already accepted by a driver")
+	case errors.Is(err, ride.ErrTerminal):
+		// Terminal rides are immutable; the operation is no longer possible.
+		writeProblem(w, r, http.StatusGone, "Gone", "ILLEGAL_TRANSITION", "ride is in a terminal state")
 	case errors.Is(err, ride.ErrIllegalTransition):
-		// Map illegal transition on accept to the contract's business conflict.
 		writeProblem(w, r, http.StatusConflict, "Conflict", "ILLEGAL_TRANSITION", "ride is not in REQUESTED state")
 	case errors.Is(err, ride.ErrInvalidArgument):
 		writeProblem(w, r, http.StatusBadRequest, "Bad Request", "INVALID_REQUEST", err.Error())

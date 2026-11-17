@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"ride/internal/domain/ride"
 )
@@ -152,15 +153,20 @@ func (r *RideRepository) Update(ctx context.Context, rd *ride.Ride, expectedVers
 		return err
 	}
 	if n == 0 {
-		// Distinguish version/status conflicts when possible.
 		current, err := r.GetByID(ctx, rd.ID)
 		if err != nil {
 			return err
 		}
-		if current.Status != ride.StatusRequested {
-			return ride.ErrIllegalTransition
+		switch {
+		case current.Status.IsTerminal():
+			return fmt.Errorf("%w: ride is %s", ride.ErrTerminal, current.Status)
+		case current.Status == ride.StatusAccepted:
+			return fmt.Errorf("%w: ride is already assigned to a driver", ride.ErrAlreadyAccepted)
+		case current.Status != ride.StatusRequested:
+			return fmt.Errorf("%w: %s cannot transition to ACCEPTED", ride.ErrIllegalTransition, current.Status)
+		default:
+			return ride.ErrVersionConflict
 		}
-		return ride.ErrVersionConflict
 	}
 	return nil
 }

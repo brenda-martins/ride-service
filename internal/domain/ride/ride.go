@@ -78,10 +78,13 @@ func NewRequested(id, riderID string, pickup, dropoff GeoPoint, estimatedFare Mo
 // driverDisplayName and vehiclePlate are historical snapshots captured at acceptance.
 func (r *Ride) Accept(driverID string, expectedVersion int64, driverAvailable bool, driverDisplayName, vehiclePlate string, now time.Time) error {
 	if r.Status.IsTerminal() {
-		return ErrIllegalTransition
+		return fmt.Errorf("%w: ride is %s", ErrTerminal, r.Status)
+	}
+	if r.Status == StatusAccepted {
+		return fmt.Errorf("%w: ride is already assigned to a driver", ErrAlreadyAccepted)
 	}
 	if r.Status != StatusRequested {
-		return ErrIllegalTransition
+		return fmt.Errorf("%w: %s cannot transition to ACCEPTED", ErrIllegalTransition, r.Status)
 	}
 	if expectedVersion != r.Version {
 		return ErrVersionConflict
