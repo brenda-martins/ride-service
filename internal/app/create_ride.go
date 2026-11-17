@@ -11,7 +11,6 @@ import (
 
 const EndpointCreateRide = "POST /v1/rides"
 
-// CreateRideInput contains the data required to request a new ride.
 type CreateRideInput struct {
 	RiderID        string
 	Pickup         ride.GeoPoint
@@ -20,7 +19,6 @@ type CreateRideInput struct {
 	IdempotencyKey string
 }
 
-// CreateRideOutput is the result of creating (or replaying) a ride request.
 type CreateRideOutput struct {
 	Ride         *ride.Ride
 	Replayed     bool
@@ -28,7 +26,6 @@ type CreateRideOutput struct {
 	ResponseBody []byte
 }
 
-// CreateRide handles ride creation with idempotency support.
 type CreateRide struct {
 	Rides    RideRepository
 	Store    IdempotencyStore
@@ -49,22 +46,44 @@ func (uc *CreateRide) Execute(ctx context.Context, in CreateRideInput) (CreateRi
 		return CreateRideOutput{}, err
 	}
 	cfg := uc.idempotencyConfig(in)
-
-	if out, replayed, err := uc.replay(ctx, cfg, hash); err != nil {
+	if err := RequireTransaction(cfg, uc.Tx); err != nil {
 		return CreateRideOutput{}, err
-	} else if replayed {
-		return out, nil
+	}
+
+	if rec, found, err := LookupIdempotency(ctx, cfg, hash); err != nil {
+		return CreateRideOutput{}, err
+	} else if found {
+		return replayCreateRide(rec)
 	}
 
 	r, body, err := uc.buildRide(in)
 	if err != nil {
 		return CreateRideOutput{}, err
 	}
-	if err := uc.persist(ctx, cfg, hash, r, body); err != nil {
+
+	var out CreateRideOutput
+	err = withinTx(ctx, uc.Tx, func(ctx context.Context) error {
+		existing, claimed, err := ClaimIdempotency(ctx, cfg, hash)
+		if err != nil {
+			return err
+		}
+		if !claimed {
+			out, err = replayCreateRide(existing)
+			return err
+		}
+		if err := uc.Rides.Create(ctx, r); err != nil {
+			return err
+		}
+		if err := CompleteIdempotency(ctx, cfg, hash, 201, body); err != nil {
+			return err
+		}
+		out = CreateRideOutput{Ride: r, Replayed: false, ResponseCode: 201, ResponseBody: body}
+		return nil
+	})
+	if err != nil {
 		return CreateRideOutput{}, err
 	}
-
-	return CreateRideOutput{Ride: r, Replayed: false, ResponseCode: 201, ResponseBody: body}, nil
+	return out, nil
 }
 
 func createRideRequestHash(in CreateRideInput) (string, error) {
@@ -90,23 +109,6 @@ func (uc *CreateRide) idempotencyConfig(in CreateRideInput) IdempotencyConfig {
 	}
 }
 
-func (uc *CreateRide) replay(ctx context.Context, cfg IdempotencyConfig, hash string) (CreateRideOutput, bool, error) {
-	rec, replayed, err := BeginIdempotency(ctx, cfg, hash)
-	if err != nil || !replayed {
-		return CreateRideOutput{}, false, err
-	}
-	var r ride.Ride
-	if err := json.Unmarshal(rec.ResponseBody, &r); err != nil {
-		return CreateRideOutput{}, false, err
-	}
-	return CreateRideOutput{
-		Ride:         &r,
-		Replayed:     true,
-		ResponseCode: 200,
-		ResponseBody: rec.ResponseBody,
-	}, true, nil
-}
-
 func (uc *CreateRide) buildRide(in CreateRideInput) (*ride.Ride, []byte, error) {
 	estimated, err := uc.Estimate(in.Pickup, in.Dropoff)
 	if err != nil {
@@ -127,11 +129,15 @@ func (uc *CreateRide) buildRide(in CreateRideInput) (*ride.Ride, []byte, error) 
 	return r, body, nil
 }
 
-func (uc *CreateRide) persist(ctx context.Context, cfg IdempotencyConfig, hash string, r *ride.Ride, body []byte) error {
-	return withinTx(ctx, uc.Tx, func(ctx context.Context) error {
-		if err := uc.Rides.Create(ctx, r); err != nil {
-			return err
-		}
-		return SaveIdempotency(ctx, cfg, hash, 201, body)
-	})
+func replayCreateRide(rec *IdempotencyRecord) (CreateRideOutput, error) {
+	var r ride.Ride
+	if err := json.Unmarshal(rec.ResponseBody, &r); err != nil {
+		return CreateRideOutput{}, err
+	}
+	return CreateRideOutput{
+		Ride:         &r,
+		Replayed:     true,
+		ResponseCode: 200,
+		ResponseBody: rec.ResponseBody,
+	}, nil
 }
